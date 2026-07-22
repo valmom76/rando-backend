@@ -15,7 +15,10 @@ public record SaveManualTeamsRequest(
     int setsToWin,
     int pointsPerSet,
     int tieBreakPoints,
-    String format
+    String format,
+    int startersPerTeam,
+    int yellowCardsForSuspension,
+    int redCardSuspensionMatches
 ) {
   public record ManualTeamDTO(
       int teamIndex,

@@ -16,6 +16,9 @@ public interface TeamGenerationSessionRepository extends JpaRepository<TeamGener
 
   Optional<TeamGenerationSession> findTopByTenantIdOrderByCreatedAtDesc(UUID tenantId);
 
+  Optional<TeamGenerationSession> findTopByTenantIdAndModeInOrderByCreatedAtDesc(
+          UUID tenantId, List<String> modes);
+
   Optional<TeamGenerationSession> findByGameSession(GameSession gameSession);
 
   @Query("SELECT s FROM TeamGenerationSession s WHERE s.gameSession.id = :gameSessionId")

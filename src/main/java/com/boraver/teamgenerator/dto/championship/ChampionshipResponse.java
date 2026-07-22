@@ -19,5 +19,8 @@ public record ChampionshipResponse(
     String matchesType, // se aplicável
     String status,
     UUID generationSessionId,
-    int defaultSetsToWin
+    int defaultSetsToWin,
+    int startersPerTeam,
+    int yellowCardsForSuspension,
+    int redCardSuspensionMatches
 ) {}

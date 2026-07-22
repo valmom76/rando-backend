@@ -1,6 +1,5 @@
 package com.boraver.teamgenerator.dto.championship;
 
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
@@ -16,7 +15,11 @@ public record CreateChampionshipRequest(
     Integer teamsPerGroup, // pode ser calculado ou informado? Normalmente é automático
     Integer qualifiedPerGroup, // usado se format = "GROUPS"
     Map<Integer, String> teamNames,
+    Map<Integer, Integer> teamGroups,
     int setsToWin,
     int pointsPerSet,
-    int tieBreakPoints
+    int tieBreakPoints,
+    int startersPerTeam,
+    int yellowCardsForSuspension,
+    int redCardSuspensionMatches
 ) {}

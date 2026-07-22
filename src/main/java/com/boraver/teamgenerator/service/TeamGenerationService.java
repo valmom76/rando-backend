@@ -16,6 +16,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -34,6 +36,7 @@ public class TeamGenerationService {
   private final GeneratedTeamRepository teamRepository;
   private final GeneratedTeamPlayerRepository teamPlayerRepository;
   private final PlayerPositionRepository playerPositionRepository;
+  private final FriendlySessionAttendanceConfirmationRepository attendanceConfirmationRepository;
   private final ChampionshipService championshipService;
   private final ObjectMapper mapper;
 
@@ -225,8 +228,10 @@ public class TeamGenerationService {
   }
 
   public GenerateTeamsResponse getLatestSession(UUID tenantId) {
-    TeamGenerationSession latest = sessionRepository.findTopByTenantIdOrderByCreatedAtDesc(tenantId)
-            .orElseThrow(() -> new IllegalArgumentException("Nenhuma sessão de geração encontrada"));
+    TeamGenerationSession latest = sessionRepository
+            .findTopByTenantIdAndModeInOrderByCreatedAtDesc(tenantId, List.of("DB", "POTS"))
+            .orElseThrow(() -> new IllegalArgumentException(
+                    "Nenhuma geração de times por sorteio foi encontrada"));
     return getTeamsBySessionInternal(latest);
   }
 
@@ -309,12 +314,17 @@ public class TeamGenerationService {
                                                       int pointsPerSet, int setsToWin, String sessionDate, String sessionTime) {
     TeamGenerationSession session = sessionRepository.findById(sessionId).orElseThrow(() -> new IllegalArgumentException("Sessão não encontrada"));
     if (!session.getTenantId().equals(tenantId)) throw new SecurityException("Acesso negado");
+    FriendlySessionAttendanceConfirmation attendanceConfirmation =
+            attendanceConfirmationRepository.findBySessionIdAndTenantId(sessionId, tenantId)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "Confirme as presenças antes de iniciar a sessão."));
 
     ObjectNode rules = mapper.createObjectNode();
     rules.put("mode", "avulso");
     rules.put("pointsPerSet", pointsPerSet);
     rules.put("setsToWin", setsToWin);
 
+    LocalDate confirmedSessionDate = null;
     if (sessionDate != null && !sessionDate.isBlank() && sessionTime != null && !sessionTime.isBlank()) {
       try {
         String dateTimeStr = sessionDate + "T" + sessionTime + ":00";
@@ -322,6 +332,7 @@ public class TeamGenerationService {
         java.time.ZoneId zoneId = java.time.ZoneId.of("America/Fortaleza");
         OffsetDateTime playDate = localDateTime.atZone(zoneId).withZoneSameInstant(java.time.ZoneOffset.UTC).toOffsetDateTime();
         session.setPlayDate(playDate);
+        confirmedSessionDate = LocalDate.parse(sessionDate);
       } catch (Exception e) { /* log */ }
     }
 
@@ -333,7 +344,14 @@ public class TeamGenerationService {
       court.teamIndices().forEach(teamsNode::add);
     }
     session.setRulesJson(toJson(rules));
-    return sessionRepository.save(session);
+    TeamGenerationSession savedSession = sessionRepository.save(session);
+    if (confirmedSessionDate != null
+            && !confirmedSessionDate.equals(attendanceConfirmation.getSessionDate())) {
+      attendanceConfirmation.setSessionDate(confirmedSessionDate);
+      attendanceConfirmation.setUpdatedAt(LocalDateTime.now());
+      attendanceConfirmationRepository.save(attendanceConfirmation);
+    }
+    return savedSession;
   }
 
   @Transactional

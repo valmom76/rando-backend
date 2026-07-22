@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import com.boraver.teamgenerator.exception.LimitExceededException;
 import java.util.HashMap;
@@ -36,6 +37,13 @@ public class ApiExceptionHandler {
     public ResponseEntity<?> uploadTooLarge() {
         return ResponseEntity.badRequest().body(Map.of(
                 "error", "A imagem deve ter no máximo 5 MB"
+        ));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<?> resourceNotFound(NoResourceFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
+                "error", "Arquivo não encontrado"
         ));
     }
 

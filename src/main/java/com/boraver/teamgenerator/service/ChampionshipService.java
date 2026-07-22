@@ -30,8 +30,9 @@ public class ChampionshipService {
   private final GeneratedTeamRepository generatedTeamRepository;
   private final GeneratedTeamPlayerRepository teamPlayerRepository;
   private final PlayerRepository playerRepository;
-  private final GameSessionRepository gameSessionRepository;
   private final TenantRepository tenantRepository;
+  private final FriendlySessionAttendanceConfirmationRepository attendanceConfirmationRepository;
+  private final FootballManagementService footballManagementService;
   private final ObjectMapper mapper;
 
   private static final List<String> KNOCKOUT_STAGE_ORDER = List.of("QUARTER", "SEMI", "FINAL");
@@ -40,26 +41,35 @@ public class ChampionshipService {
 
   @Transactional
   public ChampionshipResponse createChampionship(UUID tenantId, CreateChampionshipRequest request) {
-    Optional<GameSession> sessionOpt = gameSessionRepository.findByTenantIdAndActiveTrue(tenantId);
-    if (sessionOpt.isEmpty()) {
-      throw new IllegalStateException("Não há sessão de jogos ativa. Inicie os jogos primeiro.");
+    TeamGenerationSession teamGen = sessionRepository.findById(request.generationSessionId())
+            .filter(session -> session.getTenantId().equals(tenantId))
+            .orElseThrow(() -> new IllegalArgumentException(
+                    "A geração de times selecionada não foi encontrada neste grupo."));
+    if ("MANUAL".equals(teamGen.getMode())) {
+      throw new IllegalArgumentException(
+              "Esta sessão foi montada manualmente. Selecione uma geração feita por sorteio.");
     }
-    GameSession gameSession = sessionOpt.get();
-
-    Optional<TeamGenerationSession> teamGenOpt = sessionRepository.findByGameSession(gameSession);
-    if (teamGenOpt.isEmpty()) {
-      throw new IllegalStateException("Sessão de geração de times não encontrada para a sessão ativa.");
+    if (attendanceConfirmationRepository.existsBySessionIdAndTenantId(
+            teamGen.getId(), tenantId)) {
+      throw new IllegalArgumentException(
+              "Esta geração já possui presença confirmada para um amistoso. "
+                      + "Retire a confirmação antes de criar o campeonato.");
     }
-    TeamGenerationSession teamGen = teamGenOpt.get();
 
     List<GeneratedTeam> generatedTeams = generatedTeamRepository.findAllBySessionIdOrderByTeamIndexAsc(teamGen.getId());
+    if (generatedTeams.size() < 2) {
+      throw new IllegalArgumentException("A geração precisa possuir pelo menos dois times.");
+    }
     int teamCount = generatedTeams.size();
 
-    boolean hasPredefinedGroups = false;
-    Map<Integer, Integer> teamGroupMap = new HashMap<>();
-    int predefinedGroupsCount = request.groupsCount();
+    Map<Integer, Integer> teamGroupMap = request.teamGroups() == null
+            ? new HashMap<>()
+            : new HashMap<>(request.teamGroups());
+    boolean hasPredefinedGroups = !teamGroupMap.isEmpty();
+    int predefinedGroupsCount = Objects.requireNonNullElse(request.groupsCount(), 0);
 
-    if (teamGen.getRulesJson() != null && !teamGen.getRulesJson().isEmpty()) {
+    if (!hasPredefinedGroups
+            && teamGen.getRulesJson() != null && !teamGen.getRulesJson().isEmpty()) {
       try {
         ObjectNode rules = mapper.readValue(teamGen.getRulesJson(), ObjectNode.class);
         if (rules.has("teamGroups")) {
@@ -77,6 +87,35 @@ public class ChampionshipService {
       }
     }
 
+    if ("GROUPS".equals(request.format())) {
+      if (predefinedGroupsCount < 1 || predefinedGroupsCount > teamCount) {
+        throw new IllegalArgumentException(
+                "O número de grupos deve estar entre 1 e o total de times.");
+      }
+      if (request.qualifiedPerGroup() == null || request.qualifiedPerGroup() < 1) {
+        throw new IllegalArgumentException(
+                "Informe ao menos um classificado por grupo.");
+      }
+      if (hasPredefinedGroups) {
+        final int validatedGroupsCount = predefinedGroupsCount;
+        Set<Integer> generatedTeamIndexes = generatedTeams.stream()
+                .map(GeneratedTeam::getTeamIndex)
+                .collect(Collectors.toSet());
+        if (!teamGroupMap.keySet().equals(generatedTeamIndexes)) {
+          throw new IllegalArgumentException(
+                  "Todos os times da geração devem ser alocados exatamente uma vez.");
+        }
+        boolean hasInvalidGroup = teamGroupMap.values().stream()
+                .anyMatch(groupId -> groupId == null
+                        || groupId < 1
+                        || groupId > validatedGroupsCount);
+        if (hasInvalidGroup) {
+          throw new IllegalArgumentException(
+                  "A alocação contém um grupo inexistente.");
+        }
+      }
+    }
+
     SportType sportType = getTenantSportType(tenantId);
     Championship championship = new Championship();
     championship.setTenantId(tenantId);
@@ -89,6 +128,10 @@ public class ChampionshipService {
     championship.setMatchesType(request.matchesType());
     applySportRules(championship, sportType, request.setsToWin(),
             request.pointsPerSet(), request.tieBreakPoints());
+    applyFootballManagementRules(
+            championship, sportType, generatedTeams,
+            request.startersPerTeam(), request.yellowCardsForSuspension(),
+            request.redCardSuspensionMatches());
     championship = championshipRepository.save(championship);
 
     Map<Integer, String> teamNames = request.teamNames();
@@ -142,6 +185,10 @@ public class ChampionshipService {
     championship.setTeamCount(generatedTeams.size());
     applySportRules(championship, sportType, request.setsToWin(),
             request.pointsPerSet(), request.tieBreakPoints());
+    applyFootballManagementRules(
+            championship, sportType, generatedTeams,
+            request.startersPerTeam(), request.yellowCardsForSuspension(),
+            request.redCardSuspensionMatches());
     championship = championshipRepository.save(championship);
 
     switch (championship.getFormat()) {
@@ -169,6 +216,17 @@ public class ChampionshipService {
       if (!groups.containsKey(g) || groups.get(g).isEmpty()) {
         throw new IllegalArgumentException("Grupo " + g + " não possui times definidos.");
       }
+    }
+
+    int smallestGroupSize = groups.values().stream()
+            .mapToInt(List::size)
+            .min()
+            .orElse(0);
+    if (qualifiedPerGroup > smallestGroupSize) {
+      throw new IllegalArgumentException(
+              "Número de classificados por grupo (" + qualifiedPerGroup
+                      + ") não pode ser maior que o menor grupo ("
+                      + smallestGroupSize + ").");
     }
 
     int matchRound = 1;
@@ -714,10 +772,14 @@ public class ChampionshipService {
     boolean isWalkover = Boolean.TRUE.equals(request.walkover());
 
     if (isWalkover) {
+      footballManagementService.clearGoalsForWalkover(match.getId());
       registerFootballWalkover(match, request.winnerTeamIndex());
     } else {
+      footballManagementService.validateReadyForResult(championship, match);
       int homeScore = requireNonNegativeScore(request.homeScore(), "mandante");
       int awayScore = requireNonNegativeScore(request.awayScore(), "visitante");
+      footballManagementService.validateGoalScore(
+              championship, match, homeScore, awayScore);
       FootballDecision decision = calculateFootballDecision(
               championship, match, homeScore, awayScore);
 
@@ -790,6 +852,7 @@ public class ChampionshipService {
     match.setPlayed(true);
     match.setStatus("finished");
     championshipMatchRepository.save(match);
+    footballManagementService.applySuspensionsAfterMatch(championshipId, match);
 
     if (isGroupMatch(match) || isLeagueMatch(match)) {
       updateStandings(championshipId, match, isWalkover, isWalkover ? 3 : null);
@@ -1593,6 +1656,7 @@ public class ChampionshipService {
     if (!championship.getTenantId().equals(tenantId)) {
       throw new SecurityException("Acesso negado");
     }
+    footballManagementService.deleteChampionshipData(championshipId);
     championshipRepository.delete(championship);
   }
 
@@ -1617,7 +1681,8 @@ public class ChampionshipService {
             c.getTeamCount(), c.getSportType(), c.getFormat(), c.getGroupsCount(), c.getTeamsPerGroup(),
             c.getQualifiedPerGroup(), c.getMatchesType(), c.getStatus(),
             c.getGenerationSession() != null ? c.getGenerationSession().getId() : null,
-            c.getDefaultSetsToWin());
+            c.getDefaultSetsToWin(), c.getStartersPerTeam(),
+            c.getYellowCardsForSuspension(), c.getRedCardSuspensionMatches());
   }
 
   private ChampionshipSummary mapToSummary(Championship c) {
@@ -1647,6 +1712,36 @@ public class ChampionshipService {
     championship.setDefaultSetsToWin(setsToWin);
     championship.setDefaultPointsPerSet(pointsPerSet);
     championship.setDefaultTieBreakPoints(tieBreakPoints);
+  }
+
+  private void applyFootballManagementRules(
+          Championship championship,
+          SportType sportType,
+          List<GeneratedTeam> generatedTeams,
+          int requestedStarters,
+          int requestedYellowCards,
+          int requestedRedSuspensionMatches) {
+    if (sportType != SportType.FOOTBALL) return;
+
+    int minimumTeamSize = generatedTeams.stream()
+            .mapToInt(team -> teamPlayerRepository.findByTeamId(team.getId()).size())
+            .min()
+            .orElseThrow(() -> new IllegalArgumentException("Os times não possuem jogadores."));
+    int starters = requestedStarters > 0
+            ? requestedStarters
+            : Math.min(11, minimumTeamSize);
+    if (starters > minimumTeamSize) {
+      throw new IllegalArgumentException(
+              "A quantidade de titulares não pode ultrapassar o menor time ("
+                      + minimumTeamSize + " jogadores).");
+    }
+
+    championship.setStartersPerTeam(starters);
+    championship.setYellowCardsForSuspension(
+            requestedYellowCards > 0 ? requestedYellowCards : 3);
+    championship.setRedCardSuspensionMatches(
+            requestedRedSuspensionMatches > 0 ? requestedRedSuspensionMatches : 1);
+    championship.setFootballManagementEnabled(true);
   }
 
   private TeamInfo mapToTeamInfo(ChampionshipTeam ct) {

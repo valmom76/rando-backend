@@ -11,6 +11,7 @@ import java.util.*;
 
 public interface PlayerRepository extends JpaRepository<Player, UUID> {
   List<Player> findAllByTenantIdAndActiveTrue(UUID tenantId, Sort sort);
+  List<Player> findAllByTenantIdOrderByNameAsc(UUID tenantId);
   List<Player> findAllByTenantIdAndIdIn(UUID tenantId, List<UUID> ids);
   Optional<Player> findByIdAndTenantId(UUID id, UUID tenantId);
   List<Player> findAllByIdInAndTenantId(List<UUID> ids, UUID tenantId);

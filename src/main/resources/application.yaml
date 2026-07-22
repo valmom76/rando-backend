@@ -25,8 +25,15 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
+    # Na primeira adoção do Flyway em um banco existente, configure
+    # SPRING_FLYWAY_BASELINE_VERSION com a última migration já aplicada.
+    baseline-version: ${SPRING_FLYWAY_BASELINE_VERSION:1}
     locations: classpath:db/migration
     validate-on-migrate: true
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
   mail:
     host: smtp.sendgrid.net
     port: 587
@@ -53,7 +60,9 @@ app:
   security:
     jwt-secret: ${JWT_SECRET}
     jwt-expiration-ms: 86400000
-  upload-dir: ${APP_UPLOAD_DIR:/app/uploads}
+  # Em desenvolvimento, resolve para a pasta "uploads" na raiz do backend.
+  # Em Docker/produção, APP_UPLOAD_DIR pode continuar apontando para /app/uploads.
+  upload-dir: ${APP_UPLOAD_DIR:./uploads}
   frontend-url: https://rando.esp.br
 asaas:
   api-key: ${ASAAS_API_KEY}

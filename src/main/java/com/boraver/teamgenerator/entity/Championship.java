@@ -74,4 +74,16 @@ public class Championship {
 
   @Column(name = "default_tie_break_points", nullable = false)
   private int defaultTieBreakPoints = 15;
+
+  @Column(name = "starters_per_team", nullable = false)
+  private int startersPerTeam = 11;
+
+  @Column(name = "yellow_cards_for_suspension", nullable = false)
+  private int yellowCardsForSuspension = 3;
+
+  @Column(name = "red_card_suspension_matches", nullable = false)
+  private int redCardSuspensionMatches = 1;
+
+  @Column(name = "football_management_enabled", nullable = false)
+  private boolean footballManagementEnabled = false;
 }

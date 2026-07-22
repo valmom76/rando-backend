@@ -24,18 +24,33 @@ public class FriendlySessionService {
   private final GeneratedTeamPlayerRepository teamPlayerRepository;
   private final PlayerRepository playerRepository;
   private final FriendlyMatchRepository friendlyMatchRepository;
+  private final FriendlySessionAttendanceConfirmationRepository attendanceConfirmationRepository;
   private final ObjectMapper mapper;
 
   public List<FriendlySessionSummary> listFriendlySessions(UUID tenantId) {
     List<TeamGenerationSession> sessions = sessionRepository
             .findByTenantIdOrderByCreatedAtDesc(tenantId);
 
+    Set<UUID> friendlySessionIds = sessions.stream()
+            .filter(this::isFriendlyMode)
+            .map(TeamGenerationSession::getId)
+            .collect(Collectors.toSet());
+    Set<UUID> confirmedSessionIds = friendlySessionIds.isEmpty()
+            ? Set.of()
+            : attendanceConfirmationRepository
+                    .findByTenantIdAndSessionIdIn(tenantId, friendlySessionIds)
+                    .stream()
+                    .map(FriendlySessionAttendanceConfirmation::getSessionId)
+                    .collect(Collectors.toSet());
+
     return sessions.stream()
             .filter(this::isFriendlyMode)
             .map(s -> {
               int teamCount = teamRepository.countBySessionId(s.getId());
               String date = s.getCreatedAt().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
-              return new FriendlySessionSummary(s.getId(), date, teamCount);
+              boolean attendanceConfirmed = confirmedSessionIds.contains(s.getId());
+              return new FriendlySessionSummary(
+                      s.getId(), date, teamCount, attendanceConfirmed);
             })
             .collect(Collectors.toList());
   }

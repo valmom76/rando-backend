@@ -28,7 +28,7 @@ public class TenantService {
 
   private final TenantRepository tenantRepository;
 
-  @Value("${app.upload-dir:/app/uploads}")
+  @Value("${app.upload-dir:./uploads}")
   private String uploadDir;
 
   public TenantSettingsDTO getSettings(UUID tenantId) {
